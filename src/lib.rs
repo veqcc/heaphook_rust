@@ -1,8 +1,6 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
+use std::alloc::Layout;
 use std::env;
 use std::process;
-use lazy_static::lazy_static;
 use std::ptr;
 use libc::{mmap, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS};
 use rlsf::Tlsf;
@@ -12,10 +10,6 @@ use std::os::raw::c_void;
 use libc::{dlsym, RTLD_NEXT};
 use std::ffi::CStr;
 
-static MEMPOOL_INITIALIZED : AtomicBool = AtomicBool::new(false);
-lazy_static! {
-    static ref MUTEX : Mutex<bool> = Mutex::new(false);
-}
 
 type MallocType = unsafe extern "C" fn(usize) -> *mut c_void;
 static ORIGINAL_MALLOC : Lazy<MallocType> = Lazy::new(|| {
@@ -35,18 +29,8 @@ static ORIGINAL_FREE : Lazy<FreeType> = Lazy::new(|| {
     }
 });
 
-fn initialize() -> () {
-    if MEMPOOL_INITIALIZED.load(Ordering::Acquire) {
-        return;
-    }
-
-    let _guard = MUTEX.lock().unwrap();
-
-
-    if MEMPOOL_INITIALIZED.load(Ordering::Acquire) {
-        return;
-    }
-
+type TlsfType = Tlsf<'static, u16, u16, 12, 16>;
+static TLSF : Lazy<TlsfType> = Lazy::new(|| {
     let mempool_size_env : String = match env::var("MEMPOOL_SIZE") {
         Ok(value) => { value }
         Err(error) => {
@@ -73,13 +57,18 @@ fn initialize() -> () {
         std::slice::from_raw_parts_mut(ptr as *mut MaybeUninit<u8>, mempool_size)
     };
 
-    const FLLEN : usize = 12; // first level
-    const SLLEN : usize = 16; // second level
-    let mut tlsf: Tlsf<'_, u16, u16, FLLEN, SLLEN> = Tlsf::new();
+    let mut tlsf: TlsfType = Tlsf::new();
     tlsf.insert_free_block(pool);
 
-    MEMPOOL_INITIALIZED.store(true, Ordering::Release);
-}
+    tlsf
+});
+
+// fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
+//     tlsf_malloc_internal(|size| {
+//         let layout = Layout::from_size_align(size, 8).unwrap();
+//         tlsf.allocate(layout).unwrap()
+//     })
+// }
 
 #[no_mangle]
 pub extern "C" fn malloc(size : usize) -> *mut c_void {
@@ -90,7 +79,6 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
             ORIGINAL_MALLOC(size)
         } else {
             IS_IN_HOOKED_CALL = true;
-            initialize();
             let ret = ORIGINAL_MALLOC(size);
             IS_IN_HOOKED_CALL = false;
 
@@ -108,7 +96,6 @@ pub extern "C" fn free(ptr : *mut c_void) -> () {
             ORIGINAL_FREE(ptr)
         } else {
             IS_IN_HOOKED_CALL = true;
-            initialize();
             ORIGINAL_FREE(ptr);
             IS_IN_HOOKED_CALL = false;
         }
