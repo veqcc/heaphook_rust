@@ -9,7 +9,7 @@ use rlsf::Tlsf;
 use std::mem::MaybeUninit;
 use once_cell::sync::Lazy;
 use std::os::raw::c_void;
-use libc::{size_t, dlsym, RTLD_NEXT};
+use libc::{dlsym, RTLD_NEXT};
 use std::ffi::CStr;
 
 static MEMPOOL_INITIALIZED : AtomicBool = AtomicBool::new(false);
@@ -17,12 +17,21 @@ lazy_static! {
     static ref MUTEX : Mutex<bool> = Mutex::new(false);
 }
 
-type MallocType = unsafe extern "C" fn(size_t) -> *mut c_void;
+type MallocType = unsafe extern "C" fn(usize) -> *mut c_void;
 static ORIGINAL_MALLOC : Lazy<MallocType> = Lazy::new(|| {
     unsafe {
         let symbol = CStr::from_bytes_with_nul(b"malloc\0").unwrap();
         let malloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(malloc_ptr)
+    }
+});
+
+type FreeType = unsafe extern "C" fn(*mut c_void) -> ();
+static ORIGINAL_FREE : Lazy<FreeType> = Lazy::new(|| {
+    unsafe {
+        let symbol = CStr::from_bytes_with_nul(b"free\0").unwrap();
+        let free_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute(free_ptr)
     }
 });
 
@@ -73,11 +82,10 @@ fn initialize() -> () {
 }
 
 #[no_mangle]
-pub extern "C" fn malloc(size : size_t) -> *mut c_void {
+pub extern "C" fn malloc(size : usize) -> *mut c_void {
     static mut IS_IN_HOOKED_CALL : bool = false;
     
     unsafe {
-        // let original_malloc = ORIGINAL_MALLOC.unwrap();
         if IS_IN_HOOKED_CALL {
             ORIGINAL_MALLOC(size)
         } else {
@@ -87,6 +95,22 @@ pub extern "C" fn malloc(size : size_t) -> *mut c_void {
             IS_IN_HOOKED_CALL = false;
 
             ret
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free(ptr : *mut c_void) -> () {
+    static mut IS_IN_HOOKED_CALL : bool = false;
+    
+    unsafe {
+        if IS_IN_HOOKED_CALL {
+            ORIGINAL_FREE(ptr)
+        } else {
+            IS_IN_HOOKED_CALL = true;
+            initialize();
+            ORIGINAL_FREE(ptr);
+            IS_IN_HOOKED_CALL = false;
         }
     }
 }
