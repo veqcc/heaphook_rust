@@ -43,6 +43,15 @@ static ORIGINAL_CALLOC : Lazy<CallocType> = Lazy::new(|| {
     }
 });
 
+type ReallocType = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
+static ORIGINAL_REALLOC : Lazy<ReallocType> = Lazy::new(|| {
+    unsafe {
+        let symbol = CStr::from_bytes_with_nul(b"realloc\0").unwrap();
+        let realloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute(realloc_ptr)
+    }
+});
+
 type TlsfType = Tlsf<'static, u32, u32, 20, 16>;
 static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     let mempool_size_env : String = match env::var("MEMPOOL_SIZE") {
@@ -100,6 +109,16 @@ fn tlsf_calloc_wrapped(num : usize, size : usize) -> *mut c_void {
     tlsf_allocate_internal(num * size)
 }
 
+fn tlsf_realloc_wrapped(ptr : *mut c_void, size : usize) -> *mut c_void {
+    let layout = Layout::from_size_align(size, 4096).unwrap();
+    let new_ptr = unsafe {
+        let non_null_ptr: NonNull<u8> = NonNull::new_unchecked(ptr as *mut u8);
+        TLSF.lock().unwrap().reallocate(non_null_ptr, layout).unwrap()
+    };
+    new_ptr.as_ptr() as *mut c_void
+}
+
+
 thread_local! {
     static HOOKED : RefCell<bool> = RefCell::new(false);
 }
@@ -146,5 +165,16 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
                 ret
             }
         })
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
+    unsafe {
+        if INITIALIZED.load(Ordering::Acquire) {
+            tlsf_realloc_wrapped(ptr, new_size)
+        } else {
+            ORIGINAL_REALLOC(ptr, new_size)
+        }
     }
 }
