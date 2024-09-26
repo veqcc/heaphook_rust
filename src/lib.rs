@@ -99,7 +99,7 @@ fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
     tlsf_allocate_internal(size)
 }
 
-fn tlsf_free_wrapped(ptr : *mut c_void) -> () {
+fn tlsf_free_wrapped(ptr : *mut c_void) {
     unsafe {
         let non_null_ptr: NonNull<u8> = NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().deallocate(non_null_ptr, 4096);
@@ -142,7 +142,7 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
 }
 
 #[no_mangle]
-pub extern "C" fn free(ptr : *mut c_void) -> () {
+pub extern "C" fn free(ptr : *mut c_void) {
     unsafe {
         if INITIALIZED.load(Ordering::Acquire) {
             tlsf_free_wrapped(ptr)
