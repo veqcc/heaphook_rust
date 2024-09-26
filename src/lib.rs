@@ -12,6 +12,7 @@ use libc::{dlsym, RTLD_NEXT};
 use std::ffi::CStr;
 use std::sync::Mutex;
 use std::sync::atomic::Ordering;
+use std::cell::RefCell;
 
 static INITIALIZED : AtomicBool = AtomicBool::new(false);
 
@@ -33,7 +34,16 @@ static ORIGINAL_FREE : Lazy<FreeType> = Lazy::new(|| {
     }
 });
 
-type TlsfType = Tlsf<'static, u16, u16, 12, 16>;
+type CallocType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
+static ORIGINAL_CALLOC : Lazy<CallocType> = Lazy::new(|| {
+    unsafe {
+        let symbol = CStr::from_bytes_with_nul(b"calloc\0").unwrap();
+        let calloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute(calloc_ptr)
+    }
+});
+
+type TlsfType = Tlsf<'static, u32, u32, 20, 16>;
 static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     let mempool_size_env : String = match env::var("MEMPOOL_SIZE") {
         Ok(value) => { value }
@@ -47,7 +57,6 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
 
     const PAGE_SIZE: usize = 4096;
     let aligned_size = (mempool_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
-    println!("aligned size = {}", aligned_size);
 
     let addr : *mut c_void = 0x40000000000 as *mut c_void;
 
@@ -70,11 +79,14 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     Mutex::new(tlsf)
 });
 
-fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
+fn tlsf_allocate_internal(size : usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 4096).unwrap();
-    println!("allocate size = {}", size);
     let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
     ptr.as_ptr() as *mut c_void
+}
+
+fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
+    tlsf_allocate_internal(size)
 }
 
 fn tlsf_free_wrapped(ptr : *mut c_void) -> () {
@@ -84,30 +96,55 @@ fn tlsf_free_wrapped(ptr : *mut c_void) -> () {
     }
 }
 
+fn tlsf_calloc_wrapped(num : usize, size : usize) -> *mut c_void {
+    tlsf_allocate_internal(num * size)
+}
+
+thread_local! {
+    static HOOKED : RefCell<bool> = RefCell::new(false);
+}
+
 #[no_mangle]
 pub extern "C" fn malloc(size : usize) -> *mut c_void {
-    static mut HOOKED : bool = false;
     unsafe {
-        if HOOKED {
-            ORIGINAL_MALLOC(size)
+        HOOKED.with(|hooked| {
+            if *hooked.borrow() {
+                ORIGINAL_MALLOC(size)
+            } else {
+                hooked.replace(true);
+                let ret = tlsf_malloc_wrapped(size);
+                INITIALIZED.store(true, Ordering::Release);
+                hooked.replace(false);
+                ret
+            }
+        })
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn free(ptr : *mut c_void) -> () {
+    unsafe {
+        if INITIALIZED.load(Ordering::Acquire) {
+            tlsf_free_wrapped(ptr)
         } else {
-            HOOKED = true;
-            let ret = tlsf_malloc_wrapped(size);
-            INITIALIZED.store(true, Ordering::Release);
-            println!("addr = {:p}", ret);
-            HOOKED = false;
-            ret
+            ORIGINAL_FREE(ptr)
         }
     }
 }
 
 #[no_mangle]
-pub extern "C" fn free(ptr : *mut c_void) -> () {    
+pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
     unsafe {
-        if INITIALIZED.load(Ordering::Acquire) {
-            tlsf_free_wrapped(ptr)
-        } else {
-            ORIGINAL_FREE(ptr);
-        }
+        HOOKED.with(|hooked| {
+            if *hooked.borrow() {
+                ORIGINAL_CALLOC(num, size)
+            } else {
+                hooked.replace(true);
+                let ret = tlsf_calloc_wrapped(num, size);
+                INITIALIZED.store(true, Ordering::Release);
+                hooked.replace(false);
+                ret
+            }
+        })
     }
 }
