@@ -1,19 +1,21 @@
-use std::alloc::Layout;
-use std::env;
-use std::process;
-use std::ptr;
-use std::ptr::NonNull;
-use std::sync::atomic::AtomicBool;
-use libc::{mmap, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED};
+use std::{
+    alloc::Layout,
+    env,
+    process,
+    ptr,
+    cell::RefCell,
+    ffi::CStr,
+    os::raw::c_void,
+    mem::MaybeUninit,
+    sync::{
+        Mutex,
+        atomic::AtomicBool,
+        atomic::Ordering
+    }
+};
+use libc::{mmap, dlsym, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED, RTLD_NEXT};
 use rlsf::Tlsf;
-use std::mem::MaybeUninit;
 use once_cell::sync::Lazy;
-use std::os::raw::c_void;
-use libc::{dlsym, RTLD_NEXT};
-use std::ffi::CStr;
-use std::sync::Mutex;
-use std::sync::atomic::Ordering;
-use std::cell::RefCell;
 
 static INITIALIZED : AtomicBool = AtomicBool::new(false);
 
@@ -101,7 +103,7 @@ fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
 
 fn tlsf_free_wrapped(ptr : *mut c_void) {
     unsafe {
-        let non_null_ptr: NonNull<u8> = NonNull::new_unchecked(ptr as *mut u8);
+        let non_null_ptr: ptr::NonNull<u8> = ptr::NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().deallocate(non_null_ptr, 4096);
     }
 }
@@ -113,7 +115,7 @@ fn tlsf_calloc_wrapped(num : usize, size : usize) -> *mut c_void {
 fn tlsf_realloc_wrapped(ptr : *mut c_void, size : usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 4096).unwrap();
     let new_ptr = unsafe {
-        let non_null_ptr: NonNull<u8> = NonNull::new_unchecked(ptr as *mut u8);
+        let non_null_ptr: ptr::NonNull<u8> = ptr::NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().reallocate(non_null_ptr, layout).unwrap()
     };
     new_ptr.as_ptr() as *mut c_void
