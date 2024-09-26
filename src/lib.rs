@@ -55,7 +55,7 @@ static ORIGINAL_REALLOC : Lazy<ReallocType> = Lazy::new(|| {
     }
 });
 
-type TlsfType = Tlsf<'static, u32, u32, 20, 16>;
+type TlsfType = Tlsf<'static, u32, u32, 32, 32>;
 static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     let mempool_size_env : String = match env::var("MEMPOOL_SIZE") {
         Ok(value) => { value }
@@ -146,11 +146,17 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn free(ptr : *mut c_void) {
     unsafe {
-        if INITIALIZED.load(Ordering::Acquire) {
-            tlsf_free_wrapped(ptr)
-        } else {
-            ORIGINAL_FREE(ptr)
-        }
+        if ptr.is_null() { return }
+
+        HOOKED.with(|hooked| {
+            if *hooked.borrow() {
+                ORIGINAL_FREE(ptr);
+            } else {
+                hooked.replace(true);
+                tlsf_free_wrapped(ptr);
+                hooked.replace(false);
+            }
+        });
     }
 }
 
@@ -174,11 +180,18 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
     unsafe {
-        if INITIALIZED.load(Ordering::Acquire) {
-            tlsf_realloc_wrapped(ptr, new_size)
-        } else {
-            ORIGINAL_REALLOC(ptr, new_size)
-        }
+        if ptr.is_null() { return ptr::null_mut() }
+
+        HOOKED.with(|hooked| {
+            if *hooked.borrow() {
+                ORIGINAL_REALLOC(ptr, new_size)
+            } else {
+                hooked.replace(true);
+                let ret = tlsf_realloc_wrapped(ptr, new_size);
+                hooked.replace(false);
+                ret
+            }
+        })
     }
 }
 
