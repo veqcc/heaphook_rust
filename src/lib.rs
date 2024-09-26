@@ -1,6 +1,7 @@
 use std::alloc::Layout;
 use std::env;
 use std::process;
+use std::ptr;
 use std::ptr::NonNull;
 use std::sync::atomic::AtomicBool;
 use libc::{mmap, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED};
@@ -177,4 +178,34 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
             ORIGINAL_REALLOC(ptr, new_size)
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn posix_memalign(_memptr : *mut *mut c_void, _alignment : usize, _size : usize) -> i32 {
+    println!("TODO: posix_memalign should be implemented");
+    0
+}
+
+#[no_mangle]
+pub extern "C" fn memalign(_alignment : usize, _size : usize) -> *mut c_void {
+    println!("TODO: memalign should be implemented");
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn aligned_alloc(_alignment : usize, _size : usize) -> *mut c_void {
+    println!("TODO: aligned_alloc should be implemented");
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn valloc(_size : usize) -> *mut c_void {
+    println!("TODO: valloc should be implemented");
+    ptr::null_mut()
+}
+
+#[no_mangle]
+pub extern "C" fn pvalloc(_size : usize) -> *mut c_void {
+    println!("TODO: pvalloc should be implemented");
+    ptr::null_mut()
 }
