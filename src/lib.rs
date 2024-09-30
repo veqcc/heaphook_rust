@@ -1,8 +1,5 @@
 use std::{
     alloc::Layout,
-    env,
-    process,
-    ptr,
     cell::RefCell,
     ffi::CStr,
     os::raw::c_void,
@@ -57,11 +54,11 @@ static ORIGINAL_REALLOC : Lazy<ReallocType> = Lazy::new(|| {
 
 type TlsfType = Tlsf<'static, u32, u32, 32, 32>;
 static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
-    let mempool_size_env : String = match env::var("MEMPOOL_SIZE") {
+    let mempool_size_env : String = match std::env::var("MEMPOOL_SIZE") {
         Ok(value) => { value }
         Err(error) => {
             println!("MEMPOOL_SIZE is not set in environment variable: {}", error);
-            process::exit(1);
+            std::process::exit(1);
         }
     };
 
@@ -78,7 +75,7 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
 
     if ptr == libc::MAP_FAILED {
         println!("mmap failed");
-        process::exit(1);
+        std::process::exit(1);
     }
 
     let pool: &mut [MaybeUninit<u8>] = unsafe {
@@ -92,7 +89,7 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
 });
 
 fn tlsf_allocate_internal(size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 4096).unwrap();
+    let layout = Layout::from_size_align(size, 16).unwrap();
     let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
     ptr.as_ptr() as *mut c_void
 }
@@ -101,21 +98,14 @@ fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
     tlsf_allocate_internal(size)
 }
 
-fn tlsf_free_wrapped(ptr : *mut c_void) {
-    unsafe {
-        let non_null_ptr: ptr::NonNull<u8> = ptr::NonNull::new_unchecked(ptr as *mut u8);
-        TLSF.lock().unwrap().deallocate(non_null_ptr, 4096);
-    }
-}
-
 fn tlsf_calloc_wrapped(num : usize, size : usize) -> *mut c_void {
     tlsf_allocate_internal(num * size)
 }
 
 fn tlsf_realloc_wrapped(ptr : *mut c_void, size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 4096).unwrap();
+    let layout = Layout::from_size_align(size, 16).unwrap();
     let new_ptr = unsafe {
-        let non_null_ptr: ptr::NonNull<u8> = ptr::NonNull::new_unchecked(ptr as *mut u8);
+        let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().reallocate(non_null_ptr, layout).unwrap()
     };
     new_ptr.as_ptr() as *mut c_void
@@ -148,12 +138,15 @@ pub extern "C" fn free(ptr : *mut c_void) {
     if ptr.is_null() { return; };
 
     unsafe {
+        let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
+        let ptr_addr = non_null_ptr.as_ptr() as usize;
+
         HOOKED.with(|hooked| {
-            if *hooked.borrow() {
+            if *hooked.borrow() || ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
                 ORIGINAL_FREE(ptr);
             } else {
                 hooked.replace(true);
-                tlsf_free_wrapped(ptr);
+                TLSF.lock().unwrap().deallocate(non_null_ptr, 16);
                 hooked.replace(false);
             }
         });
@@ -180,20 +173,26 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
     unsafe {
-        if ptr.is_null() {
-            ORIGINAL_MALLOC(new_size)
-        } else {
-            HOOKED.with(|hooked| {
-                if *hooked.borrow() {
-                    ORIGINAL_REALLOC(ptr, new_size)
-                } else {
-                    hooked.replace(true);
-                    let ret = tlsf_realloc_wrapped(ptr, new_size);
-                    hooked.replace(false);
+        // TODO: the current implementation is incorrect
+        let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
+        let ptr_addr = non_null_ptr.as_ptr() as usize;
+
+        HOOKED.with(|hooked| {
+            if *hooked.borrow() || ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
+                ORIGINAL_REALLOC(ptr, new_size)
+            } else {
+                hooked.replace(true);
+                let realloc_ret = if ptr.is_null() {
+                    let ret = tlsf_malloc_wrapped(new_size);
+                    INITIALIZED.store(true, Ordering::Release);
                     ret
-                }
-            })
-        }
+                } else {
+                    tlsf_realloc_wrapped(ptr, new_size)
+                };
+                hooked.replace(false);
+                realloc_ret
+            }
+        })
     }
 }
 
@@ -206,23 +205,23 @@ pub extern "C" fn posix_memalign(_memptr : *mut *mut c_void, _alignment : usize,
 #[no_mangle]
 pub extern "C" fn memalign(_alignment : usize, _size : usize) -> *mut c_void {
     println!("TODO: memalign should be implemented");
-    ptr::null_mut()
+    std::ptr::null_mut()
 }
 
 #[no_mangle]
 pub extern "C" fn aligned_alloc(_alignment : usize, _size : usize) -> *mut c_void {
     println!("TODO: aligned_alloc should be implemented");
-    ptr::null_mut()
+    std::ptr::null_mut()
 }
 
 #[no_mangle]
 pub extern "C" fn valloc(_size : usize) -> *mut c_void {
     println!("TODO: valloc should be implemented");
-    ptr::null_mut()
+    std::ptr::null_mut()
 }
 
 #[no_mangle]
 pub extern "C" fn pvalloc(_size : usize) -> *mut c_void {
     println!("TODO: pvalloc should be implemented");
-    ptr::null_mut()
+    std::ptr::null_mut()
 }
