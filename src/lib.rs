@@ -145,9 +145,9 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn free(ptr : *mut c_void) {
-    unsafe {
-        if ptr.is_null() { return }
+    if ptr.is_null() { return; };
 
+    unsafe {
         HOOKED.with(|hooked| {
             if *hooked.borrow() {
                 ORIGINAL_FREE(ptr);
@@ -180,18 +180,20 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
     unsafe {
-        if ptr.is_null() { return ptr::null_mut() }
-
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_REALLOC(ptr, new_size)
-            } else {
-                hooked.replace(true);
-                let ret = tlsf_realloc_wrapped(ptr, new_size);
-                hooked.replace(false);
-                ret
-            }
-        })
+        if ptr.is_null() {
+            ORIGINAL_MALLOC(new_size)
+        } else {
+            HOOKED.with(|hooked| {
+                if *hooked.borrow() {
+                    ORIGINAL_REALLOC(ptr, new_size)
+                } else {
+                    hooked.replace(true);
+                    let ret = tlsf_realloc_wrapped(ptr, new_size);
+                    hooked.replace(false);
+                    ret
+                }
+            })
+        }
     }
 }
 
