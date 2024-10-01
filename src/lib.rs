@@ -173,22 +173,26 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
     unsafe {
-        // TODO: the current implementation is incorrect
-        let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-        let ptr_addr = non_null_ptr.as_ptr() as usize;
-
         HOOKED.with(|hooked| {
-            if *hooked.borrow() || ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
+            if *hooked.borrow() {
                 ORIGINAL_REALLOC(ptr, new_size)
             } else {
                 hooked.replace(true);
+
                 let realloc_ret = if ptr.is_null() {
                     let ret = tlsf_malloc_wrapped(new_size);
                     INITIALIZED.store(true, Ordering::Release);
                     ret
                 } else {
-                    tlsf_realloc_wrapped(ptr, new_size)
+                    let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
+                    let ptr_addr = non_null_ptr.as_ptr() as usize;
+                    if ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
+                        ORIGINAL_REALLOC(ptr, new_size)
+                    } else {
+                        tlsf_realloc_wrapped(ptr, new_size)
+                    }
                 };
+
                 hooked.replace(false);
                 realloc_ret
             }
