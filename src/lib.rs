@@ -88,21 +88,13 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     Mutex::new(tlsf)
 });
 
-fn tlsf_allocate_internal(size : usize) -> *mut c_void {
+fn tlsf_allocate(size : usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 16).unwrap();
     let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
     ptr.as_ptr() as *mut c_void
 }
 
-fn tlsf_malloc_wrapped(size : usize) -> *mut c_void {
-    tlsf_allocate_internal(size)
-}
-
-fn tlsf_calloc_wrapped(num : usize, size : usize) -> *mut c_void {
-    tlsf_allocate_internal(num * size)
-}
-
-fn tlsf_realloc_wrapped(ptr : *mut c_void, size : usize) -> *mut c_void {
+fn tlsf_reallcate(ptr : *mut c_void, size : usize) -> *mut c_void {
     let layout = Layout::from_size_align(size, 16).unwrap();
     let new_ptr = unsafe {
         let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
@@ -124,7 +116,7 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
                 ORIGINAL_MALLOC(size)
             } else {
                 hooked.replace(true);
-                let ret = tlsf_malloc_wrapped(size);
+                let ret = tlsf_allocate(size);
                 INITIALIZED.store(true, Ordering::Release);
                 hooked.replace(false);
                 ret
@@ -161,7 +153,8 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
                 ORIGINAL_CALLOC(num, size)
             } else {
                 hooked.replace(true);
-                let ret = tlsf_calloc_wrapped(num, size);
+                let ret = tlsf_allocate(num * size);
+                std::ptr::write_bytes(ret, 0, num * size);
                 INITIALIZED.store(true, Ordering::Release);
                 hooked.replace(false);
                 ret
@@ -180,7 +173,7 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
                 hooked.replace(true);
 
                 let realloc_ret = if ptr.is_null() {
-                    let ret = tlsf_malloc_wrapped(new_size);
+                    let ret = tlsf_allocate(new_size);
                     INITIALIZED.store(true, Ordering::Release);
                     ret
                 } else {
@@ -189,7 +182,7 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
                     if ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
                         ORIGINAL_REALLOC(ptr, new_size)
                     } else {
-                        tlsf_realloc_wrapped(ptr, new_size)
+                        tlsf_reallcate(ptr, new_size)
                     }
                 };
 
