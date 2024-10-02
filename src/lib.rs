@@ -5,17 +5,11 @@ use std::{
     os::raw::c_void,
     mem::MaybeUninit,
     collections::HashMap,
-    sync::{
-        Mutex,
-        atomic::AtomicBool,
-        atomic::Ordering
-    }
+    sync::Mutex
 };
-use libc::{mmap, dlsym, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED, RTLD_NEXT};
+use libc::{mmap, dlsym, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED_NOREPLACE, RTLD_NEXT};
 use rlsf::Tlsf;
 use once_cell::sync::Lazy;
-
-static INITIALIZED : AtomicBool = AtomicBool::new(false);
 
 static ALIGNED_TO_ORIGINAL : Lazy<Mutex<HashMap<usize, usize>>> = Lazy::new(|| {
     Mutex::new(HashMap::new())
@@ -102,7 +96,7 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     let addr : *mut c_void = 0x40000000000 as *mut c_void;
 
     let ptr = unsafe {
-        mmap(addr, aligned_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED, -1, 0)
+        mmap(addr, aligned_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)
     };
 
     if ptr == libc::MAP_FAILED {
@@ -121,13 +115,13 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
 });
 
 fn tlsf_allocate(size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 16).unwrap();
+    let layout = Layout::from_size_align(size, 64).unwrap();
     let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
     ptr.as_ptr() as *mut c_void
 }
 
 fn tlsf_reallcate(ptr : *mut c_void, size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 16).unwrap();
+    let layout = Layout::from_size_align(size, 64).unwrap();
     let new_ptr = unsafe {
         let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().reallocate(non_null_ptr, layout).unwrap()
@@ -155,7 +149,6 @@ pub extern "C" fn malloc(size : usize) -> *mut c_void {
         } else {
             hooked.replace(true);
             let ret = tlsf_allocate(size);
-            INITIALIZED.store(true, Ordering::Release);
             hooked.replace(false);
             ret
         }
@@ -174,16 +167,17 @@ pub extern "C" fn free(ptr : *mut c_void) {
         } else {
             hooked.replace(true);
 
-            if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
-                ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
+            let mut aligned_to_original_map = ALIGNED_TO_ORIGINAL.lock().unwrap();
+            if let Some(original_addr) = aligned_to_original_map.get(&ptr_addr) {
                 unsafe {
-                    let non_null_ptr = std::ptr::NonNull::new_unchecked(*aligned_addr as *mut c_void as *mut u8);
-                    TLSF.lock().unwrap().deallocate(non_null_ptr, 16);
+                    let non_null_ptr = std::ptr::NonNull::new_unchecked(*original_addr as *mut c_void as *mut u8);
+                    TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
                 };
+                aligned_to_original_map.remove(&ptr_addr);
             } else {
                 unsafe {
                     let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-                    TLSF.lock().unwrap().deallocate(non_null_ptr, 16);
+                    TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
                 };
             }
 
@@ -201,7 +195,6 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
             hooked.replace(true);
             let ret = tlsf_allocate(num * size);
             unsafe { std::ptr::write_bytes(ret, 0, num * size); };
-            INITIALIZED.store(true, Ordering::Release);
             hooked.replace(false);
             ret
         }
@@ -218,17 +211,20 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
 
             let realloc_ret = if ptr.is_null() {
                 let ret = tlsf_allocate(new_size);
-                INITIALIZED.store(true, Ordering::Release);
                 ret
             } else {
                 let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
                 if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
                     unsafe { ORIGINAL_REALLOC(ptr, new_size) }
-                } else if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
-                    ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
-                    tlsf_reallcate(*aligned_addr as *mut c_void, new_size)
                 } else {
-                    tlsf_reallcate(ptr, new_size)
+                    let mut aligned_to_original_map = ALIGNED_TO_ORIGINAL.lock().unwrap();
+                    if let Some(original_addr) = aligned_to_original_map.get(&ptr_addr) {
+                        let ret = tlsf_reallcate(*original_addr as *mut c_void, new_size);
+                        aligned_to_original_map.remove(&ptr_addr);
+                        ret
+                    } else {
+                        tlsf_reallcate(ptr, new_size)
+                    }
                 }
             };
 
@@ -246,7 +242,6 @@ pub extern "C" fn posix_memalign(memptr : *mut *mut c_void, alignment : usize, s
         } else {
             hooked.replace(true);
             unsafe { *memptr = aligned_alloc_wrapped(alignment, size); };
-            INITIALIZED.store(true, Ordering::Release);
             hooked.replace(false);
             0
         }
@@ -261,7 +256,6 @@ pub extern "C" fn aligned_alloc(alignment : usize, size : usize) -> *mut c_void 
         } else {
             hooked.replace(true);
             let ret = aligned_alloc_wrapped(alignment, size);
-            INITIALIZED.store(true, Ordering::Release);
             hooked.replace(false);
             ret
         }
@@ -276,7 +270,6 @@ pub extern "C" fn memalign(alignment : usize, size : usize) -> *mut c_void {
         } else {
             hooked.replace(true);
             let ret = aligned_alloc_wrapped(alignment, size);
-            INITIALIZED.store(true, Ordering::Release);
             hooked.replace(false);
             ret
         }
