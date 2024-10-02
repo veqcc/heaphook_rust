@@ -149,149 +149,138 @@ thread_local! {
 
 #[no_mangle]
 pub extern "C" fn malloc(size : usize) -> *mut c_void {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_MALLOC(size)
-            } else {
-                hooked.replace(true);
-                let ret = tlsf_allocate(size);
-                INITIALIZED.store(true, Ordering::Release);
-                hooked.replace(false);
-                ret
-            }
-        })
-    }
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_MALLOC(size) }
+        } else {
+            hooked.replace(true);
+            let ret = tlsf_allocate(size);
+            INITIALIZED.store(true, Ordering::Release);
+            hooked.replace(false);
+            ret
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn free(ptr : *mut c_void) {
     if ptr.is_null() { return; };
 
-    unsafe {
-        let ptr_addr = std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize;
+    let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
 
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
-                ORIGINAL_FREE(ptr);
-            } else {
-                hooked.replace(true);
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
+            unsafe { ORIGINAL_FREE(ptr); }
+        } else {
+            hooked.replace(true);
 
-                if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
-                    ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
-
+            if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
+                ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
+                unsafe {
                     let non_null_ptr = std::ptr::NonNull::new_unchecked(*aligned_addr as *mut c_void as *mut u8);
                     TLSF.lock().unwrap().deallocate(non_null_ptr, 16);
-                } else {
+                };
+            } else {
+                unsafe {
                     let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
                     TLSF.lock().unwrap().deallocate(non_null_ptr, 16);
-                }
-
-                hooked.replace(false);
+                };
             }
-        });
-    }
+
+            hooked.replace(false);
+        }
+    });
 }
 
 #[no_mangle]
 pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_CALLOC(num, size)
-            } else {
-                hooked.replace(true);
-                let ret = tlsf_allocate(num * size);
-                std::ptr::write_bytes(ret, 0, num * size);
-                INITIALIZED.store(true, Ordering::Release);
-                hooked.replace(false);
-                ret
-            }
-        })
-    }
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_CALLOC(num, size) }
+        } else {
+            hooked.replace(true);
+            let ret = tlsf_allocate(num * size);
+            unsafe { std::ptr::write_bytes(ret, 0, num * size); };
+            INITIALIZED.store(true, Ordering::Release);
+            hooked.replace(false);
+            ret
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_REALLOC(ptr, new_size)
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_REALLOC(ptr, new_size) }
+        } else {
+            hooked.replace(true);
+
+            let realloc_ret = if ptr.is_null() {
+                let ret = tlsf_allocate(new_size);
+                INITIALIZED.store(true, Ordering::Release);
+                ret
             } else {
-                hooked.replace(true);
-
-                let realloc_ret = if ptr.is_null() {
-                    let ret = tlsf_allocate(new_size);
-                    INITIALIZED.store(true, Ordering::Release);
-                    ret
+                let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
+                if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
+                    unsafe { ORIGINAL_REALLOC(ptr, new_size) }
+                } else if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
+                    ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
+                    tlsf_reallcate(*aligned_addr as *mut c_void, new_size)
                 } else {
-                    let ptr_addr = std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize;
-                    if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
-                        ORIGINAL_REALLOC(ptr, new_size)
-                    } else if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
-                        ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
-                        tlsf_reallcate(*aligned_addr as *mut c_void, new_size)
-                    } else {
-                        tlsf_reallcate(ptr, new_size)
-                    }
-                };
+                    tlsf_reallcate(ptr, new_size)
+                }
+            };
 
-                hooked.replace(false);
-                realloc_ret
-            }
-        })
-    }
+            hooked.replace(false);
+            realloc_ret
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn posix_memalign(memptr : *mut *mut c_void, alignment : usize, size : usize) -> i32 {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_POSIX_MEMALIGN(memptr, alignment, size)
-            } else {
-                hooked.replace(true);
-                *memptr = aligned_alloc_wrapped(alignment, size);
-                INITIALIZED.store(true, Ordering::Release);
-                hooked.replace(false);
-                0
-            }
-        })
-    }
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_POSIX_MEMALIGN(memptr, alignment, size) }
+        } else {
+            hooked.replace(true);
+            unsafe { *memptr = aligned_alloc_wrapped(alignment, size); };
+            INITIALIZED.store(true, Ordering::Release);
+            hooked.replace(false);
+            0
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn aligned_alloc(alignment : usize, size : usize) -> *mut c_void {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_ALIGNED_ALLOC(alignment, size)
-            } else {
-                hooked.replace(true);
-                let ret = aligned_alloc_wrapped(alignment, size);
-                INITIALIZED.store(true, Ordering::Release);
-                hooked.replace(false);
-                ret
-            }
-        })
-    }
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_ALIGNED_ALLOC(alignment, size) }
+        } else {
+            hooked.replace(true);
+            let ret = aligned_alloc_wrapped(alignment, size);
+            INITIALIZED.store(true, Ordering::Release);
+            hooked.replace(false);
+            ret
+        }
+    })
 }
 
 #[no_mangle]
 pub extern "C" fn memalign(alignment : usize, size : usize) -> *mut c_void {
-    unsafe {
-        HOOKED.with(|hooked| {
-            if *hooked.borrow() {
-                ORIGINAL_MEMALIGN(alignment, size)
-            } else {
-                hooked.replace(true);
-                let ret = aligned_alloc_wrapped(alignment, size);
-                INITIALIZED.store(true, Ordering::Release);
-                hooked.replace(false);
-                ret
-            }
-        })
-    }
+    HOOKED.with(|hooked| {
+        if *hooked.borrow() {
+            unsafe { ORIGINAL_MEMALIGN(alignment, size) }
+        } else {
+            hooked.replace(true);
+            let ret = aligned_alloc_wrapped(alignment, size);
+            INITIALIZED.store(true, Ordering::Release);
+            hooked.replace(false);
+            ret
+        }
+    })
 }
 
 #[no_mangle]
