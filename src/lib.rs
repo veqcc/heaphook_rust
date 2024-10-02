@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     sync::Mutex
 };
-use libc::{mmap, dlsym, PROT_READ, PROT_WRITE, MAP_PRIVATE, MAP_ANONYMOUS, MAP_FIXED_NOREPLACE, RTLD_NEXT};
+use libc::{dlsym, RTLD_NEXT};
 use rlsf::Tlsf;
 use once_cell::sync::Lazy;
 
@@ -96,7 +96,8 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     let addr : *mut c_void = 0x40000000000 as *mut c_void;
 
     let ptr = unsafe {
-        mmap(addr, aligned_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0)
+        libc::mmap(addr, aligned_size, libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE, -1, 0)
     };
 
     if ptr == libc::MAP_FAILED {
