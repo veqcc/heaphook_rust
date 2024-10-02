@@ -228,13 +228,11 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
                     let ptr_addr = std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize;
                     if ptr_addr < 0x40000000000 || ptr_addr > 0x50000000000 {
                         ORIGINAL_REALLOC(ptr, new_size)
+                    } else if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
+                        ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
+                        tlsf_reallcate(*aligned_addr as *mut c_void, new_size)
                     } else {
-                        if let Some(aligned_addr) = ALIGNED_TO_ORIGINAL.lock().unwrap().get(&ptr_addr) {
-                            ALIGNED_TO_ORIGINAL.lock().unwrap().remove(&ptr_addr);
-                            tlsf_reallcate(*aligned_addr as *mut c_void, new_size)
-                        } else {
-                            tlsf_reallcate(ptr, new_size)
-                        }
+                        tlsf_reallcate(ptr, new_size)
                     }
                 };
 
