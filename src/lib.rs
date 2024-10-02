@@ -17,8 +17,8 @@ static ALIGNED_TO_ORIGINAL : Lazy<Mutex<HashMap<usize, usize>>> = Lazy::new(|| {
 
 type MallocType = unsafe extern "C" fn(usize) -> *mut c_void;
 static ORIGINAL_MALLOC : Lazy<MallocType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"malloc\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"malloc\0").unwrap();
         let malloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(malloc_ptr)
     }
@@ -26,8 +26,8 @@ static ORIGINAL_MALLOC : Lazy<MallocType> = Lazy::new(|| {
 
 type FreeType = unsafe extern "C" fn(*mut c_void) -> ();
 static ORIGINAL_FREE : Lazy<FreeType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"free\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"free\0").unwrap();
         let free_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(free_ptr)
     }
@@ -35,8 +35,8 @@ static ORIGINAL_FREE : Lazy<FreeType> = Lazy::new(|| {
 
 type CallocType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 static ORIGINAL_CALLOC : Lazy<CallocType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"calloc\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"calloc\0").unwrap();
         let calloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(calloc_ptr)
     }
@@ -44,8 +44,8 @@ static ORIGINAL_CALLOC : Lazy<CallocType> = Lazy::new(|| {
 
 type ReallocType = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
 static ORIGINAL_REALLOC : Lazy<ReallocType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"realloc\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"realloc\0").unwrap();
         let realloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(realloc_ptr)
     }
@@ -53,8 +53,8 @@ static ORIGINAL_REALLOC : Lazy<ReallocType> = Lazy::new(|| {
 
 type PosixMemalignType = unsafe extern "C" fn(*mut *mut c_void, usize, usize) -> i32;
 static ORIGINAL_POSIX_MEMALIGN : Lazy<PosixMemalignType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"posix_memalign\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"posix_memalign\0").unwrap();
         let posix_memalign_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(posix_memalign_ptr)
     }
@@ -62,8 +62,8 @@ static ORIGINAL_POSIX_MEMALIGN : Lazy<PosixMemalignType> = Lazy::new(|| {
 
 type AlignedAllocType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 static ORIGINAL_ALIGNED_ALLOC : Lazy<AlignedAllocType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"aligned_alloc\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"aligned_alloc\0").unwrap();
         let aligned_alloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(aligned_alloc_ptr)
     }
@@ -71,8 +71,8 @@ static ORIGINAL_ALIGNED_ALLOC : Lazy<AlignedAllocType> = Lazy::new(|| {
 
 type MemalignType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
 static ORIGINAL_MEMALIGN : Lazy<MemalignType> = Lazy::new(|| {
+    let symbol = CStr::from_bytes_with_nul(b"memalign\0").unwrap();
     unsafe {
-        let symbol = CStr::from_bytes_with_nul(b"memalign\0").unwrap();
         let memalign_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(memalign_ptr)
     }
