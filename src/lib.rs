@@ -11,6 +11,8 @@ use libc::{dlsym, RTLD_NEXT};
 use rlsf::Tlsf;
 use once_cell::sync::Lazy;
 
+const ALIGNMENT : usize = 64;
+
 static ALIGNED_TO_ORIGINAL : Lazy<Mutex<HashMap<usize, usize>>> = Lazy::new(|| {
     Mutex::new(HashMap::new())
 });
@@ -116,13 +118,13 @@ static TLSF : Lazy<Mutex<TlsfType>> = Lazy::new(|| {
 });
 
 fn tlsf_allocate(size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 64).unwrap();
+    let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
     let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
     ptr.as_ptr() as *mut c_void
 }
 
 fn tlsf_reallcate(ptr : *mut c_void, size : usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, 64).unwrap();
+    let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
     let new_ptr = unsafe {
         let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
         TLSF.lock().unwrap().reallocate(non_null_ptr, layout).unwrap()
@@ -133,7 +135,7 @@ fn tlsf_reallcate(ptr : *mut c_void, size : usize) -> *mut c_void {
 fn tlsf_deallocate(ptr : *mut c_void) {
     unsafe {
         let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-        TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
+        TLSF.lock().unwrap().deallocate(non_null_ptr, ALIGNMENT);
     }
 }
 
