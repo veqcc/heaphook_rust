@@ -130,13 +130,19 @@ fn tlsf_reallcate(ptr : *mut c_void, size : usize) -> *mut c_void {
     new_ptr.as_ptr() as *mut c_void
 }
 
+fn tlsf_deallocate(ptr : *mut c_void) {
+    unsafe {
+        let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
+        TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
+    }
+}
+
 fn aligned_alloc_wrapped(alignment : usize, size : usize) -> *mut c_void {
     let addr = tlsf_allocate(size + alignment) as usize;
     let aligned_addr = addr + alignment - (addr % alignment);
     ALIGNED_TO_ORIGINAL.lock().unwrap().insert(aligned_addr, addr);
     aligned_addr as *mut c_void
 }
-
 
 thread_local! {
     static HOOKED : RefCell<bool> = RefCell::new(false);
@@ -170,16 +176,10 @@ pub extern "C" fn free(ptr : *mut c_void) {
 
             let mut aligned_to_original_map = ALIGNED_TO_ORIGINAL.lock().unwrap();
             if let Some(original_addr) = aligned_to_original_map.get(&ptr_addr) {
-                unsafe {
-                    let non_null_ptr = std::ptr::NonNull::new_unchecked(*original_addr as *mut c_void as *mut u8);
-                    TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
-                };
+                tlsf_deallocate(*original_addr as *mut c_void);
                 aligned_to_original_map.remove(&ptr_addr);
             } else {
-                unsafe {
-                    let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-                    TLSF.lock().unwrap().deallocate(non_null_ptr, 64);
-                };
+                tlsf_deallocate(ptr);
             }
 
             hooked.replace(false);
@@ -211,8 +211,7 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
             hooked.replace(true);
 
             let realloc_ret = if ptr.is_null() {
-                let ret = tlsf_allocate(new_size);
-                ret
+                tlsf_allocate(new_size)
             } else {
                 let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
                 if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
