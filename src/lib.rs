@@ -152,7 +152,7 @@ thread_local! {
 
 #[no_mangle]
 pub extern "C" fn malloc(size : usize) -> *mut c_void {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_MALLOC(size) }
         } else {
@@ -170,7 +170,7 @@ pub extern "C" fn free(ptr : *mut c_void) {
 
     let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
 
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
             unsafe { ORIGINAL_FREE(ptr); }
         } else {
@@ -191,7 +191,7 @@ pub extern "C" fn free(ptr : *mut c_void) {
 
 #[no_mangle]
 pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_CALLOC(num, size) }
         } else {
@@ -206,7 +206,7 @@ pub extern "C" fn calloc(num : usize, size : usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_REALLOC(ptr, new_size) }
         } else {
@@ -238,7 +238,7 @@ pub extern "C" fn realloc(ptr : *mut c_void, new_size : usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn posix_memalign(memptr : *mut *mut c_void, alignment : usize, size : usize) -> i32 {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_POSIX_MEMALIGN(memptr, alignment, size) }
         } else {
@@ -252,7 +252,7 @@ pub extern "C" fn posix_memalign(memptr : *mut *mut c_void, alignment : usize, s
 
 #[no_mangle]
 pub extern "C" fn aligned_alloc(alignment : usize, size : usize) -> *mut c_void {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_ALIGNED_ALLOC(alignment, size) }
         } else {
@@ -266,7 +266,7 @@ pub extern "C" fn aligned_alloc(alignment : usize, size : usize) -> *mut c_void 
 
 #[no_mangle]
 pub extern "C" fn memalign(alignment : usize, size : usize) -> *mut c_void {
-    HOOKED.with(|hooked| {
+    HOOKED.with(|hooked : &RefCell<bool>| {
         if *hooked.borrow() {
             unsafe { ORIGINAL_MEMALIGN(alignment, size) }
         } else {
