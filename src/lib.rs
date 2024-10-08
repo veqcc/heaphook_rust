@@ -80,8 +80,6 @@ type FLBitmap = u32; // FLBitmap should contain at least FLLEN bits
 type SLBitmap = u64; // SLBitmap should contain at least SLLEN bits
 type TlsfType = Tlsf<'static, FLBitmap, SLBitmap, FLLEN, SLLEN>;
 static TLSF: LazyLock<Mutex<TlsfType>> = LazyLock::new(|| {
-    // TODO: These mmap related procedures will be moved to agnocast
-
     let mempool_size_env: String = std::env::var("MEMPOOL_SIZE").unwrap_or_else(|error| {
         panic!("{}: MEMPOOL_SIZE", error);
     });
@@ -193,7 +191,6 @@ pub extern "C" fn free(ptr: *mut c_void) {
     };
 
     HOOKED.with(|hooked: &Cell<bool>| {
-        // TODO: address range should use the one the kernel module assigns
         let ptr_addr: usize = non_null_ptr.as_ptr() as usize;
         if hooked.get() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
             unsafe { ORIGINAL_FREE(ptr) }
@@ -243,7 +240,6 @@ pub extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
 
             let realloc_ret: *mut c_void =
                 if let Some(non_null_ptr) = std::ptr::NonNull::new(ptr as *mut u8) {
-                    // TODO: address range should use the one the kernel module assigns
                     let ptr_addr: usize = non_null_ptr.as_ptr() as usize;
                     if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
                         unsafe { ORIGINAL_REALLOC(ptr, new_size) }
