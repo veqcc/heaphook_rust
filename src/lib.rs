@@ -1,93 +1,97 @@
-use libc::{dlsym, RTLD_NEXT};
-use once_cell::sync::Lazy;
 use rlsf::Tlsf;
 use std::{
-    alloc::Layout, cell::RefCell, collections::HashMap, ffi::CStr, mem::MaybeUninit,
-    os::raw::c_void, sync::Mutex,
+    alloc::Layout,
+    cell::Cell,
+    collections::HashMap,
+    ffi::CStr,
+    mem::MaybeUninit,
+    os::raw::c_void,
+    sync::{LazyLock, Mutex},
 };
 
 const ALIGNMENT: usize = 64;
 
-static ALIGNED_TO_ORIGINAL: Lazy<Mutex<HashMap<usize, usize>>> =
-    Lazy::new(|| Mutex::new(HashMap::new()));
-
 type MallocType = unsafe extern "C" fn(usize) -> *mut c_void;
-static ORIGINAL_MALLOC: Lazy<MallocType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"malloc\0").unwrap();
+static ORIGINAL_MALLOC: LazyLock<MallocType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"malloc\0").unwrap();
     unsafe {
-        let malloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
-        std::mem::transmute(malloc_ptr)
+        let malloc_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute::<*mut c_void, MallocType>(malloc_ptr)
     }
 });
 
 type FreeType = unsafe extern "C" fn(*mut c_void) -> ();
-static ORIGINAL_FREE: Lazy<FreeType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"free\0").unwrap();
+static ORIGINAL_FREE: LazyLock<FreeType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"free\0").unwrap();
     unsafe {
-        let free_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
-        std::mem::transmute(free_ptr)
+        let free_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute::<*mut c_void, FreeType>(free_ptr)
     }
 });
 
 type CallocType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
-static ORIGINAL_CALLOC: Lazy<CallocType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"calloc\0").unwrap();
+static ORIGINAL_CALLOC: LazyLock<CallocType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"calloc\0").unwrap();
     unsafe {
-        let calloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
-        std::mem::transmute(calloc_ptr)
+        let calloc_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute::<*mut c_void, CallocType>(calloc_ptr)
     }
 });
 
 type ReallocType = unsafe extern "C" fn(*mut c_void, usize) -> *mut c_void;
-static ORIGINAL_REALLOC: Lazy<ReallocType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"realloc\0").unwrap();
+static ORIGINAL_REALLOC: LazyLock<ReallocType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"realloc\0").unwrap();
     unsafe {
-        let realloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
-        std::mem::transmute(realloc_ptr)
+        let realloc_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
+        std::mem::transmute::<*mut c_void, ReallocType>(realloc_ptr)
     }
 });
 
-type PosixMemalignType = unsafe extern "C" fn(*mut *mut c_void, usize, usize) -> i32;
-static ORIGINAL_POSIX_MEMALIGN: Lazy<PosixMemalignType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"posix_memalign\0").unwrap();
+type PosixMemalignType = unsafe extern "C" fn(&mut *mut c_void, usize, usize) -> i32;
+static ORIGINAL_POSIX_MEMALIGN: LazyLock<PosixMemalignType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"posix_memalign\0").unwrap();
     unsafe {
-        let posix_memalign_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        let posix_memalign_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(posix_memalign_ptr)
     }
 });
 
 type AlignedAllocType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
-static ORIGINAL_ALIGNED_ALLOC: Lazy<AlignedAllocType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"aligned_alloc\0").unwrap();
+static ORIGINAL_ALIGNED_ALLOC: LazyLock<AlignedAllocType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"aligned_alloc\0").unwrap();
     unsafe {
-        let aligned_alloc_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        let aligned_alloc_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(aligned_alloc_ptr)
     }
 });
 
 type MemalignType = unsafe extern "C" fn(usize, usize) -> *mut c_void;
-static ORIGINAL_MEMALIGN: Lazy<MemalignType> = Lazy::new(|| {
-    let symbol = CStr::from_bytes_with_nul(b"memalign\0").unwrap();
+static ORIGINAL_MEMALIGN: LazyLock<MemalignType> = LazyLock::new(|| {
+    let symbol: &CStr = CStr::from_bytes_with_nul(b"memalign\0").unwrap();
     unsafe {
-        let memalign_ptr = dlsym(RTLD_NEXT, symbol.as_ptr());
+        let memalign_ptr: *mut c_void = libc::dlsym(libc::RTLD_NEXT, symbol.as_ptr());
         std::mem::transmute(memalign_ptr)
     }
 });
 
-type TlsfType = Tlsf<'static, u32, u32, 32, 32>;
-static TLSF: Lazy<Mutex<TlsfType>> = Lazy::new(|| {
-    let mempool_size_env: String = match std::env::var("MEMPOOL_SIZE") {
-        Ok(value) => value,
-        Err(error) => {
-            println!("MEMPOOL_SIZE is not set in environment variable: {}", error);
-            std::process::exit(1);
-        }
-    };
+const FLLEN: usize = 28; // The maximum block size is (32 << 28) - 1 = 8_589_934_591 (nearly 8GiB)
+const SLLEN: usize = 64; // The worst-case internal fragmentation is ((32 << 28) / 64 - 2) = 134_217_726 (nearly 128MiB)
+type FLBitmap = u32; // FLBitmap should contain at least FLLEN bits
+type SLBitmap = u64; // SLBitmap should contain at least SLLEN bits
+type TlsfType = Tlsf<'static, FLBitmap, SLBitmap, FLLEN, SLLEN>;
+static TLSF: LazyLock<Mutex<TlsfType>> = LazyLock::new(|| {
+    // TODO: These mmap related procedures will be moved to agnocast
 
-    let mempool_size: usize = mempool_size_env.parse::<usize>().unwrap();
+    let mempool_size_env: String = std::env::var("MEMPOOL_SIZE").unwrap_or_else(|error| {
+        panic!("{}: MEMPOOL_SIZE", error);
+    });
 
-    const PAGE_SIZE: usize = 4096;
-    let aligned_size = (mempool_size + PAGE_SIZE - 1) & !(PAGE_SIZE - 1);
+    let mempool_size: usize = mempool_size_env.parse::<usize>().unwrap_or_else(|error| {
+        panic!("{}: MEMPOOL_SIZE", error);
+    });
+
+    let page_size: usize = unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize };
+    let aligned_size: usize = (mempool_size + page_size - 1) & !(page_size - 1);
 
     let addr: *mut c_void = 0x40000000000 as *mut c_void;
 
@@ -96,15 +100,14 @@ static TLSF: Lazy<Mutex<TlsfType>> = Lazy::new(|| {
             addr,
             aligned_size,
             libc::PROT_READ | libc::PROT_WRITE,
-            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED_NOREPLACE,
+            libc::MAP_PRIVATE | libc::MAP_ANONYMOUS | libc::MAP_FIXED,
             -1,
             0,
         )
     };
 
     if ptr == libc::MAP_FAILED {
-        println!("mmap failed");
-        std::process::exit(1);
+        panic!("mmap failed");
     }
 
     let pool: &mut [MaybeUninit<u8>] =
@@ -116,54 +119,67 @@ static TLSF: Lazy<Mutex<TlsfType>> = Lazy::new(|| {
     Mutex::new(tlsf)
 });
 
+static ALIGNED_TO_ORIGINAL: LazyLock<Mutex<HashMap<usize, usize>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
 fn tlsf_allocate(size: usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
-    let ptr = TLSF.lock().unwrap().allocate(layout).unwrap();
+    let layout: Layout = Layout::from_size_align(size, ALIGNMENT).unwrap_or_else(|error| {
+        panic!("{}: size={}, alignment={}", error, size, ALIGNMENT);
+    });
+
+    let mut tlsf = TLSF.lock().unwrap();
+
+    let ptr: std::ptr::NonNull<u8> = tlsf.allocate(layout).unwrap_or_else(|| {
+        panic!("memory allocation failed: consider using larger MEMPOOL_SIZE");
+    });
+
     ptr.as_ptr() as *mut c_void
 }
 
-fn tlsf_reallcate(ptr: *mut c_void, size: usize) -> *mut c_void {
-    let layout = Layout::from_size_align(size, ALIGNMENT).unwrap();
-    let new_ptr = unsafe {
-        let non_null_ptr: std::ptr::NonNull<u8> = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-        TLSF.lock()
-            .unwrap()
-            .reallocate(non_null_ptr, layout)
-            .unwrap()
+fn tlsf_reallocate(ptr: std::ptr::NonNull<u8>, size: usize) -> *mut c_void {
+    let layout: Layout = Layout::from_size_align(size, ALIGNMENT).unwrap_or_else(|error| {
+        panic!("{}: size={}, alignment={}", error, size, ALIGNMENT);
+    });
+
+    let mut tlsf = TLSF.lock().unwrap();
+
+    let new_ptr: std::ptr::NonNull<u8> = unsafe {
+        tlsf.reallocate(ptr, layout).unwrap_or_else(|| {
+            panic!("memory allocation failed: consider using larger MEMPOOL_SIZE");
+        })
     };
+
     new_ptr.as_ptr() as *mut c_void
 }
 
-fn tlsf_deallocate(ptr: *mut c_void) {
-    unsafe {
-        let non_null_ptr = std::ptr::NonNull::new_unchecked(ptr as *mut u8);
-        TLSF.lock().unwrap().deallocate(non_null_ptr, ALIGNMENT);
-    }
+fn tlsf_deallocate(ptr: std::ptr::NonNull<u8>) {
+    let mut tlsf = TLSF.lock().unwrap();
+    unsafe { tlsf.deallocate(ptr, ALIGNMENT) }
 }
 
-fn aligned_alloc_wrapped(alignment: usize, size: usize) -> *mut c_void {
-    let addr = tlsf_allocate(size + alignment) as usize;
-    let aligned_addr = addr + alignment - (addr % alignment);
-    ALIGNED_TO_ORIGINAL
-        .lock()
-        .unwrap()
-        .insert(aligned_addr, addr);
+fn tlsf_aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    let addr: usize = tlsf_allocate(size + alignment) as usize;
+    let aligned_addr: usize = addr + alignment - (addr % alignment);
+
+    let mut aligned_to_original = ALIGNED_TO_ORIGINAL.lock().unwrap();
+    aligned_to_original.insert(aligned_addr, addr);
+
     aligned_addr as *mut c_void
 }
 
 thread_local! {
-    static HOOKED : RefCell<bool> = RefCell::new(false);
+    static HOOKED : Cell<bool> = const { Cell::new(false) }
 }
 
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut c_void {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_MALLOC(size) }
         } else {
-            hooked.replace(true);
-            let ret = tlsf_allocate(size);
-            hooked.replace(false);
+            hooked.set(true);
+            let ret: *mut c_void = tlsf_allocate(size);
+            hooked.set(false);
             ret
         }
     })
@@ -171,45 +187,47 @@ pub extern "C" fn malloc(size: usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn free(ptr: *mut c_void) {
-    if ptr.is_null() {
-        return;
+    let non_null_ptr: std::ptr::NonNull<u8> = match std::ptr::NonNull::new(ptr as *mut u8) {
+        Some(ptr) => ptr,
+        None => return,
     };
 
-    let ptr_addr = unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
-
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
-            unsafe {
-                ORIGINAL_FREE(ptr);
-            }
+    HOOKED.with(|hooked: &Cell<bool>| {
+        // TODO: address range should use the one the kernel module assigns
+        let ptr_addr: usize = non_null_ptr.as_ptr() as usize;
+        if hooked.get() || !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
+            unsafe { ORIGINAL_FREE(ptr) }
         } else {
-            hooked.replace(true);
+            hooked.set(true);
 
-            let mut aligned_to_original_map = ALIGNED_TO_ORIGINAL.lock().unwrap();
-            if let Some(original_addr) = aligned_to_original_map.get(&ptr_addr) {
-                tlsf_deallocate(*original_addr as *mut c_void);
-                aligned_to_original_map.remove(&ptr_addr);
+            let mut aligned_to_original = ALIGNED_TO_ORIGINAL.lock().unwrap();
+
+            if let Some(original_addr) = aligned_to_original.get(&ptr_addr) {
+                let original_ptr: std::ptr::NonNull<u8> =
+                    std::ptr::NonNull::new(*original_addr as *mut c_void as *mut u8).unwrap();
+                aligned_to_original.remove(&ptr_addr);
+                tlsf_deallocate(original_ptr);
             } else {
-                tlsf_deallocate(ptr);
+                tlsf_deallocate(non_null_ptr);
             }
 
-            hooked.replace(false);
+            hooked.set(false);
         }
     });
 }
 
 #[no_mangle]
 pub extern "C" fn calloc(num: usize, size: usize) -> *mut c_void {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_CALLOC(num, size) }
         } else {
-            hooked.replace(true);
-            let ret = tlsf_allocate(num * size);
+            hooked.set(true);
+            let ret: *mut c_void = tlsf_allocate(num * size);
             unsafe {
                 std::ptr::write_bytes(ret, 0, num * size);
             };
-            hooked.replace(false);
+            hooked.set(false);
             ret
         }
     })
@@ -217,48 +235,49 @@ pub extern "C" fn calloc(num: usize, size: usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_REALLOC(ptr, new_size) }
         } else {
-            hooked.replace(true);
+            hooked.set(true);
 
-            let realloc_ret = if ptr.is_null() {
-                tlsf_allocate(new_size)
-            } else {
-                let ptr_addr =
-                    unsafe { std::ptr::NonNull::new_unchecked(ptr as *mut u8).as_ptr() as usize };
-                if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
-                    unsafe { ORIGINAL_REALLOC(ptr, new_size) }
-                } else {
-                    let mut aligned_to_original_map = ALIGNED_TO_ORIGINAL.lock().unwrap();
-                    if let Some(original_addr) = aligned_to_original_map.get(&ptr_addr) {
-                        let ret = tlsf_reallcate(*original_addr as *mut c_void, new_size);
-                        aligned_to_original_map.remove(&ptr_addr);
-                        ret
+            let realloc_ret: *mut c_void =
+                if let Some(non_null_ptr) = std::ptr::NonNull::new(ptr as *mut u8) {
+                    // TODO: address range should use the one the kernel module assigns
+                    let ptr_addr: usize = non_null_ptr.as_ptr() as usize;
+                    if !(0x40000000000..=0x50000000000).contains(&ptr_addr) {
+                        unsafe { ORIGINAL_REALLOC(ptr, new_size) }
                     } else {
-                        tlsf_reallcate(ptr, new_size)
+                        let mut aligned_to_original = ALIGNED_TO_ORIGINAL.lock().unwrap();
+                        if let Some(original_addr) = aligned_to_original.get(&ptr_addr) {
+                            let original_ptr: std::ptr::NonNull<u8> =
+                                std::ptr::NonNull::new(*original_addr as *mut c_void as *mut u8)
+                                    .unwrap();
+                            aligned_to_original.remove(&ptr_addr);
+                            tlsf_reallocate(original_ptr, new_size)
+                        } else {
+                            tlsf_reallocate(non_null_ptr, new_size)
+                        }
                     }
-                }
-            };
+                } else {
+                    tlsf_allocate(new_size)
+                };
 
-            hooked.replace(false);
+            hooked.set(false);
             realloc_ret
         }
     })
 }
 
 #[no_mangle]
-pub extern "C" fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, size: usize) -> i32 {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+pub extern "C" fn posix_memalign(memptr: &mut *mut c_void, alignment: usize, size: usize) -> i32 {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_POSIX_MEMALIGN(memptr, alignment, size) }
         } else {
-            hooked.replace(true);
-            unsafe {
-                *memptr = aligned_alloc_wrapped(alignment, size);
-            };
-            hooked.replace(false);
+            hooked.set(true);
+            *memptr = tlsf_aligned_alloc(alignment, size);
+            hooked.set(false);
             0
         }
     })
@@ -266,13 +285,13 @@ pub extern "C" fn posix_memalign(memptr: *mut *mut c_void, alignment: usize, siz
 
 #[no_mangle]
 pub extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_ALIGNED_ALLOC(alignment, size) }
         } else {
-            hooked.replace(true);
-            let ret = aligned_alloc_wrapped(alignment, size);
-            hooked.replace(false);
+            hooked.set(true);
+            let ret = tlsf_aligned_alloc(alignment, size);
+            hooked.set(false);
             ret
         }
     })
@@ -280,13 +299,13 @@ pub extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
-    HOOKED.with(|hooked: &RefCell<bool>| {
-        if *hooked.borrow() {
+    HOOKED.with(|hooked: &Cell<bool>| {
+        if hooked.get() {
             unsafe { ORIGINAL_MEMALIGN(alignment, size) }
         } else {
-            hooked.replace(true);
-            let ret = aligned_alloc_wrapped(alignment, size);
-            hooked.replace(false);
+            hooked.set(true);
+            let ret = tlsf_aligned_alloc(alignment, size);
+            hooked.set(false);
             ret
         }
     })
@@ -294,12 +313,10 @@ pub extern "C" fn memalign(alignment: usize, size: usize) -> *mut c_void {
 
 #[no_mangle]
 pub extern "C" fn valloc(_size: usize) -> *mut c_void {
-    println!("NOTE: valloc is not supported");
-    std::ptr::null_mut()
+    panic!("NOTE: valloc is not supported");
 }
 
 #[no_mangle]
 pub extern "C" fn pvalloc(_size: usize) -> *mut c_void {
-    println!("NOTE: pvalloc is not supported");
-    std::ptr::null_mut()
+    panic!("NOTE: pvalloc is not supported");
 }
