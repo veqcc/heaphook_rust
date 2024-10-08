@@ -2,7 +2,7 @@
 #include <iostream>
 
 int main() {
-    std::vector<int> vec = {};
+    std::vector<int> vec(0);
     int sum = 0;
 
     for (int i = 0; i < 1000000; i++) {
